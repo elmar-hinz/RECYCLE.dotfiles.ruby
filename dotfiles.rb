@@ -6,65 +6,65 @@
 
 $target = '~/.rubydotfiles'
 $repository = 'git@github.com:elmar-hinz/dotfiles.git'
-$title = 'El Dotfiliereo'
+$title = 'El Dotfilejero'
 
 ##################################################
 # Library
 ##################################################
 
-module Messanger
+module Mvc
 
-    def self.ok? key, value
-        puts ''
-        puts key + ': ' + value 
-        print 'Is this O.K.? (yes, no) > '
-        answer = gets.chomp
-        self.die (key + ': ' + value) unless answer == 'yes' 
+    def model=(model)
+        @@model = model
     end
 
-    def self.ask(msg, default = "")
-        prompt = " > "
-        print msg
-        print " (default: #{default})" unless default.empty?
-        print prompt
-        result = gets.strip
-        return result.empty? ? default : result
+    def model()
+        return @@model
     end
 
-    def self.speak(msg)
-        puts msg
+    def view=(view)
+        @@view = view
     end
 
-    def self.warn(msg)
-        puts "Warning: " + msg
+    def view()
+        return @@view
     end
-    
-    def self.error(msg)
-        puts "Error: " + msg
+
+    def controller=(controller)
+        @@controller = controller
     end
-    
-    def self.die(msg)
-        puts "Exit: " + msg
-        exit(1)
+
+    def controller()
+        return @@controller
     end
 
 end
 
-class Dotfiles
+class App
+    include Mvc
 
     def initialize()
-       @controller = Controller.new()
+        self.model = Dotfiles.new($repository, $target)  
+        self.view = View::Pane.new(nil, $title)
+        self.controller = Controller.new()
     end
 
-    def run() 
-        @controller.loop()
+    def self.main() 
+        App.new.controller.loop
     end
+end
 
-    def prompt()
-        @repository = Messanger.ask 'Clone repository:', $repository
-        @target = Messanger.ask 'Target directory:', $target
-        Messanger.ok? 'Repsitory', @repository
-        Messanger.ok? 'Target', @target
+##################################################
+# Model
+##################################################
+
+class Dotfiles
+
+    attr_accessor :repository, :target
+
+    def initialize(repository, target)
+        self.repository = repository
+        self.target = target
     end
 
     def clone()
@@ -74,81 +74,9 @@ class Dotfiles
 
 end
 
-class Controller
-    
-    def self.action
-        return @@action
-    end
-
-    def self.action=(action)
-        @@action = action
-    end
-
-    def self.prompt
-        return @@prompt
-    end
-
-    def self.prompt=(prompt)
-        @@prompt = prompt
-    end
-
-    def self.preset
-        return @@preset
-    end
-
-    def self.preset=(preset)
-        @@preset = preset
-    end
-
-    def initialize()
-        Controller.action = :defaultAction
-        Controller.prompt = ''
-        Controller.preset = ''
-        @loop = true;
-        @pane = View::Pane.new()
-    end
-
-    def loop
-        input = ''
-        while @loop
-            print `clear` 
-            action(input)
-            print @pane.draw()
-            input = prompt() unless Controller.action == :quitAction 
-        end
-    end
-
-    def prompt
-        prompt = ' > '
-        puts
-        puts 'Type quit to exit.'
-        puts
-        puts Controller.prompt
-        print 'Default: "' + Controller.preset + '"' + prompt
-        input = gets.strip
-        return (input == '') ? Controller.preset : input
-    end
-
-    def action input 
-        Controller.action = :defaultAction unless Controller.action
-        Controller.action = :quitAction if input == 'quit' 
-        self.send(Controller.action)
-    end
-
-    def defaultAction
-       @pane.switch :menu 
-    end
-
-    def menuAction
-        @pane.switch :menu 
-    end
-
-    def quitAction
-       @pane.switch :quit 
-       @loop = false 
-    end
-
-end
+##################################################
+# View
+##################################################
 
 module View
 
@@ -160,6 +88,10 @@ module View
 
         def nl()
             return "\n"
+        end
+
+        def indent()
+            return "\t"
         end
 
         def head(title)
@@ -174,10 +106,24 @@ module View
     class Component
 
         include Draw
+        include Mvc
 
-        def initialize()
+        def initialize(parent)
+            @parent = parent
             @states = {}
             @current = :default
+        end
+
+        def parent()
+            return @parent
+        end
+
+        def parent=(parent)
+            @parent = parent
+        end
+
+        def root()
+            return (parent() == nil) ? self : parent()
         end
 
         def switch(current)
@@ -196,7 +142,7 @@ module View
             return state(state)[:footer]
         end
        
-        def draw
+        def draw()
             return drawHeader() + drawBody() + drawFooter()
         end
         
@@ -235,23 +181,23 @@ module View
 
     class ActionComponent < Component
 
-        def connectController
-            Controller.action = @action
-            Controller.prompt = @prompt 
-            Controller.preset = @preset
-        end
-
         def draw
             connectController()
             return super()
         end
         
+        def connectController
+            controller().action = @action
+            controller().prompt = @prompt 
+            controller().preset = @preset
+        end
+
     end
 
     class Header < Component
 
-        def initialize(title)
-            super()
+        def initialize(parent, title)
+            super(parent)
             @title = title 
         end
 
@@ -261,15 +207,27 @@ module View
         
     end
     
-    class Paragraph < Component
+    class Dict < Component
+        def initialize(parent, key, value)
+            super(parent)
+            @key = key 
+            @value = value
+        end
 
-        def initialize(msg)
-            super()
+        def drawBody 
+            return indent + '* ' + @key + ': ' + @value + nl 
+        end
+    end
+
+    class Par < Component
+
+        def initialize(parent, msg)
+            super(parent)
             @msg = msg
         end
 
         def drawBody 
-            return @msg + nl 
+            return indent + @msg + nl 
         end
     end
 
@@ -289,35 +247,109 @@ module View
 
     class Pane < Component
 
-        def initialize()
-            super()
-            header(:default).push(Header.new($title)) 
-            body(:menu).push(Menu.new());
-            body(:quit).push(GoodBy.new());
-            footer(:default).push(Footer.new()) 
+        def initialize(parent, title)
+            super(parent)
+            # header and footer only set the default
+            # while the default of body is empty
+            header.push Header.new(self, title)
+            header.push Dict.new(self, 'Reopsitory', model.repository)
+            header.push Dict.new(self, 'Target', model.target)
+            header.push Par.new(self, '') 
+            body(:menu).push Menu.new(self)
+            body(:quit).push GoodBy.new(self)
+            footer.push Footer.new(self)
         end
 
     end
 
     class Menu < ActionComponent
-        def initialize
-            super()
+        def initialize(parent)
+            super(parent)
             @action = :menuAction
-            @prompt = 'Please select a menu item'
+            @prompt = 'Please select a menu item by number'
             @preset = ''
-            body().push(Paragraph.new('1) Topic 1')) 
-            body().push(Paragraph.new('2) Topic 2')) 
+            body.push(Par.new(self, '0) Quit')) 
+            body.push(Par.new(self, '1) Clone Repository')) 
+            body.push(Par.new(self, '9) Cleanup')) 
         end
     end
 
     class GoodBy < ActionComponent
-        def initialize
-            super()
+        def initialize(parent)
+            super(parent)
             @action = :quitAction
             @prompt = ''
             @preset = ''
-            body().push(Paragraph.new('Good by')) 
+            body.push(Par.new(self, 'Good by')) 
         end
+    end
+
+end
+
+##################################################
+# Controller
+##################################################
+
+class Controller
+    
+    include Mvc
+    attr_accessor :action, :prompt, :preset
+
+    def initialize()
+        @action = :defaultAction
+        @prompt = ''
+        @preset = ''
+        @loop = true;
+    end
+
+    def loop
+        input = ''
+        while @loop
+            print `clear` 
+            action(input)
+            print view().draw()
+            input = prompt() unless @action == :quitAction 
+        end
+    end
+
+    def prompt
+        puts
+        puts 'Type quit to exit.'
+        puts
+        puts @prompt
+        print 'Default: "' + @preset + '" > '
+        input = gets.strip
+        return (input == '') ? @preset : input
+    end
+
+    def action input 
+        @action = :quitAction if input == 'quit' 
+        # puts 'Action: ' + @action.to_s
+        send(@action, input)
+    end
+
+    def defaultAction input
+       view().switch :menu 
+    end
+
+    def menuAction input
+        case input.to_i
+        when 1
+            puts 'Cloning' 
+            view().switch :menu 
+        when 9
+            puts 'Cleaning' 
+            view().switch :menu 
+        when 0
+            view().switch :quit 
+        else
+            view().switch :menu 
+        end
+    end
+
+    def quitAction input
+       view().switch :quit 
+       @loop = false 
     end
 
 end
@@ -326,9 +358,9 @@ end
 # Run
 ##################################################
 
-Dotfiles.new().run()
+App.main()
 
 ##################################################
-# End
+# The End
 ##################################################
 
